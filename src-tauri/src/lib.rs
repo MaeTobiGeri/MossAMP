@@ -2,6 +2,7 @@ mod cloud;
 mod config;
 mod eq;
 mod library;
+mod loudness;
 mod media_keys;
 mod player;
 
@@ -17,12 +18,13 @@ use eq::EqShared;
 use library::{FilterOptions, Folder, Playlist, SearchFilter, Track};
 use player::Command;
 
-struct AppState {
-    config: Mutex<Config>,
+pub(crate) struct AppState {
+    pub(crate) config: Mutex<Config>,
     config_path: PathBuf,
     cache_dir: PathBuf,
-    db: Mutex<Connection>,
+    pub(crate) db: Mutex<Connection>,
     player: Sender<Command>,
+    analyzer: Sender<loudness::Request>,
     eq: Arc<EqShared>,
     watcher: Mutex<Option<Box<dyn std::any::Any + Send>>>,
 }
@@ -40,6 +42,10 @@ impl AppState {
         let _ = self.player.send(Command::Volume(config.playback.volume));
         let _ = self.player.send(Command::Shuffle(config.playback.shuffle));
         let _ = self.player.send(Command::Repeat(config.playback.repeat));
+        let _ = self.player.send(Command::Normalize(config.playback.normalize));
+        if config.playback.normalize {
+            let _ = self.analyzer.send(loudness::Request::Wake);
+        }
     }
 }
 
@@ -69,6 +75,8 @@ async fn rescan(app: &AppHandle) -> Result<usize, String> {
     let state = app.state::<AppState>();
     library::store_scan(&mut state.db.lock().unwrap(), &tracks)?;
     let _ = app.emit("library-updated", count);
+    // New songs need measuring (does nothing while leveling is off).
+    let _ = state.analyzer.send(loudness::Request::Wake);
     Ok(count)
 }
 
@@ -113,6 +121,11 @@ async fn get_cover(path: String) -> Option<String> {
         .await
         .ok()
         .flatten()
+}
+
+#[tauri::command]
+fn get_loudness_progress(state: State<AppState>) -> Result<loudness::Progress, String> {
+    library::loudness_progress(&state.db.lock().unwrap())
 }
 
 #[tauri::command]
@@ -164,6 +177,16 @@ fn enqueue_track(state: State<AppState>, track: Track) {
 #[tauri::command]
 fn play_next(state: State<AppState>, track: Track) {
     let _ = state.player.send(Command::PlayNext(track));
+}
+
+#[tauri::command]
+fn player_resume(state: State<AppState>) {
+    let _ = state.player.send(Command::Resume);
+}
+
+#[tauri::command]
+fn player_pause(state: State<AppState>) {
+    let _ = state.player.send(Command::Pause);
 }
 
 #[tauri::command]
@@ -296,7 +319,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     };
     let config = Config::load_or_create(&config_path, music_dir);
     let eq = EqShared::new(config.eq.enabled, config.eq.gains);
-    let player = player::spawn(app.handle().clone(), eq.clone(), config.playback.clone());
+    let (analyzer, analyzer_requests) = std::sync::mpsc::channel();
+    let player = player::spawn(app.handle().clone(), eq.clone(), config.playback.clone(), analyzer.clone());
+    loudness::spawn(app.handle().clone(), analyzer_requests, player.clone());
     let startup = config.clone();
 
     app.manage(AppState {
@@ -305,9 +330,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         cache_dir: data_dir.join("cloud"),
         db: Mutex::new(library::open(&data_dir.join("library.db"))?),
         player,
+        analyzer: analyzer.clone(),
         eq,
         watcher: Mutex::new(None),
     });
+
+    // Picks up songs left unmeasured last time (does nothing while leveling is off).
+    let _ = analyzer.send(loudness::Request::Wake);
 
     let watcher = watch_config(app.handle());
     *app.state::<AppState>().watcher.lock().unwrap() = watcher;
@@ -340,6 +369,7 @@ pub fn run() {
             search_tracks,
             get_filter_options,
             get_cover,
+            get_loudness_progress,
             get_playlists,
             create_playlist,
             get_folders,
@@ -350,6 +380,8 @@ pub fn run() {
             play_queue,
             enqueue_track,
             play_next,
+            player_resume,
+            player_pause,
             player_toggle,
             player_next,
             player_previous,

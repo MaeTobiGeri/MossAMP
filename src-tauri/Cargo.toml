@@ -3,6 +3,8 @@ name = "mossamp"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
+license = "GPL-3.0-or-later"
+authors = ["MaeTobiGeri <marlon@demandgames.de>"]
 
 [lib]
 name = "mossamp_lib"
@@ -26,6 +28,7 @@ quick-xml = "0.42.0"
 tauri-plugin-dialog = "2"
 souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+ebur128 = "0.1.11"
 
 [target.'cfg(target_os = "android")'.dependencies]
 rodio = { version = "0.21", default-features = false, features = ["cpal-shared-stdcxx"] }

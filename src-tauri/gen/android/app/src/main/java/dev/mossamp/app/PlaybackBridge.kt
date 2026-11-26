@@ -5,19 +5,33 @@ import android.content.Intent
 import android.webkit.JavascriptInterface
 import androidx.core.content.ContextCompat
 
+/** Called from the web app (window.MossampAndroid) whenever playback changes. */
 class PlaybackBridge(private val context: Context) {
   @JavascriptInterface
-  fun update(title: String, artist: String, playing: Boolean) {
+  fun update(
+    title: String,
+    artist: String,
+    playing: Boolean,
+    positionSeconds: Double,
+    durationSeconds: Double,
+    path: String,
+  ) {
+    val state = PlaybackService.State(
+      title = title,
+      artist = artist,
+      playing = playing,
+      positionMs = (positionSeconds * 1000).toLong(),
+      durationMs = (durationSeconds * 1000).toLong(),
+      path = path,
+    )
+
     val running = PlaybackService.instance
     if (running != null) {
-      running.update(title, artist, playing)
+      running.post(state)
       return
     }
 
-    val intent = Intent(context, PlaybackService::class.java)
-      .putExtra(PlaybackService.EXTRA_TITLE, title)
-      .putExtra(PlaybackService.EXTRA_ARTIST, artist)
-      .putExtra(PlaybackService.EXTRA_PLAYING, playing)
-    ContextCompat.startForegroundService(context, intent)
+    PlaybackService.pending = state
+    ContextCompat.startForegroundService(context, Intent(context, PlaybackService::class.java))
   }
 }

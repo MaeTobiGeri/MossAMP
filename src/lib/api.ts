@@ -10,6 +10,14 @@ export interface Track {
   year: number;
   duration: number;
   format: string;
+  /** Integrated loudness in LUFS, once measured for volume leveling. */
+  loudness?: number | null;
+  peak?: number | null;
+}
+
+export interface LoudnessProgress {
+  analyzed: number;
+  total: number;
 }
 
 export interface Playlist {
@@ -55,7 +63,7 @@ export interface CloudConfig {
 export interface Config {
   theme: Theme;
   library: { folders: string[]; scan_on_start: boolean };
-  playback: { volume: number; shuffle: boolean; repeat: Repeat };
+  playback: { volume: number; shuffle: boolean; repeat: Repeat; normalize: boolean };
   eq: { enabled: boolean; gains: number[] };
   cloud: CloudConfig;
 }
@@ -104,6 +112,7 @@ export const api = {
   searchTracks: (filter: SearchFilter) => invoke<Track[]>("search_tracks", { filter }),
   getFilterOptions: () => invoke<FilterOptions>("get_filter_options"),
   getCover: (path: string) => invoke<string | null>("get_cover", { path }),
+  getLoudnessProgress: () => invoke<LoudnessProgress>("get_loudness_progress"),
 
   getPlaylists: () => invoke<Playlist[]>("get_playlists"),
   createPlaylist: (name: string, folder: string | null) =>
@@ -119,6 +128,8 @@ export const api = {
   playQueue: (tracks: Track[], start: number) => invoke<void>("play_queue", { tracks, start }),
   enqueueTrack: (track: Track) => invoke<void>("enqueue_track", { track }),
   playNext: (track: Track) => invoke<void>("play_next", { track }),
+  resume: () => invoke<void>("player_resume"),
+  pause: () => invoke<void>("player_pause"),
   toggle: () => invoke<void>("player_toggle"),
   next: () => invoke<void>("player_next"),
   previous: () => invoke<void>("player_previous"),

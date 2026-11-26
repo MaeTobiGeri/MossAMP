@@ -15,10 +15,16 @@ const BAND_Q: f32 = 1.2;
 /// Level above which the safety limiter starts to round off peaks.
 const LIMIT_THRESHOLD: f32 = 0.9;
 
+/// How quickly a change in the track gain (volume leveling) is applied:
+/// spread over roughly this many seconds, so it never clicks.
+const GAIN_RAMP_SECONDS: f32 = 0.3;
+
 pub struct EqShared {
     enabled: AtomicBool,
     version: AtomicU32,
     gains: Mutex<[f32; EQ_BANDS]>,
+    /// Volume-leveling gain for the current song, as f32 bits.
+    track_gain: AtomicU32,
 }
 
 impl EqShared {
@@ -27,7 +33,16 @@ impl EqShared {
             enabled: AtomicBool::new(enabled),
             version: AtomicU32::new(1),
             gains: Mutex::new(gains),
+            track_gain: AtomicU32::new(1f32.to_bits()),
         })
+    }
+
+    pub fn set_track_gain(&self, gain: f32) {
+        self.track_gain.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
+    fn track_gain(&self) -> f32 {
+        f32::from_bits(self.track_gain.load(Ordering::Relaxed))
     }
 
     pub fn set(&self, enabled: bool, gains: [f32; EQ_BANDS]) {
@@ -131,6 +146,9 @@ pub struct Equalizer<S: Source> {
     /// signal past full scale (which would clip and distort).
     preamp: f32,
     was_enabled: bool,
+    /// Track gain currently applied; glides towards the shared target.
+    gain: f32,
+    gain_step: f32,
 }
 
 /// Highest gain (as a linear factor) the combined bands apply anywhere in the
@@ -163,15 +181,19 @@ fn soft_limit(sample: f32) -> f32 {
 impl<S: Source> Equalizer<S> {
     pub fn new(source: S, shared: Arc<EqShared>) -> Self {
         let channels = source.channels() as usize;
+        let ramp_samples = GAIN_RAMP_SECONDS * source.sample_rate() as f32 * channels as f32;
         Equalizer {
             source,
-            shared,
             seen_version: 0,
             channels,
             next_channel: 0,
             filters: vec![Vec::new(); channels],
             preamp: 1.0,
             was_enabled: false,
+            // A new song starts at its own gain right away, without a glide.
+            gain: shared.track_gain(),
+            gain_step: 1.0 / ramp_samples.max(1.0),
+            shared,
         }
     }
 
@@ -220,6 +242,15 @@ impl<S: Source> Iterator for Equalizer<S> {
         let channel = self.next_channel;
         self.next_channel = (channel + 1) % self.channels;
 
+        let target = self.shared.track_gain();
+        if self.gain != target {
+            let delta = target - self.gain;
+            self.gain = if delta.abs() <= self.gain_step { target } else { self.gain + self.gain_step * delta.signum() };
+        }
+        if self.gain != 1.0 {
+            sample *= self.gain;
+        }
+
         let enabled = self.shared.enabled.load(Ordering::Relaxed);
         if enabled && !self.was_enabled {
             // History from before the EQ was switched off is stale.
@@ -234,6 +265,8 @@ impl<S: Source> Iterator for Equalizer<S> {
             for filter in &mut self.filters[channel] {
                 sample = filter.process(sample);
             }
+            sample = soft_limit(sample);
+        } else if self.gain > 1.0 {
             sample = soft_limit(sample);
         }
 

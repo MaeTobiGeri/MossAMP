@@ -27,6 +27,7 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     webView.addJavascriptInterface(PlaybackBridge(this), "MossampAndroid")
+    MediaCommands.attach(webView)
   }
 
   private fun requestRuntimePermissions() {

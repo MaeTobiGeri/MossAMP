@@ -61,6 +61,8 @@ pub struct PlaybackConfig {
     pub volume: f32,
     pub shuffle: bool,
     pub repeat: Repeat,
+    /// Volume leveling: play every song at about the same loudness.
+    pub normalize: bool,
 }
 
 impl Default for PlaybackConfig {
@@ -69,6 +71,7 @@ impl Default for PlaybackConfig {
             volume: 0.8,
             shuffle: false,
             repeat: Repeat::Off,
+            normalize: false,
         }
     }
 }

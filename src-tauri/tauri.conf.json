@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "MaeTobiGeri",
     "targets": "all",
     "icon": [
       "icons/icon.png"

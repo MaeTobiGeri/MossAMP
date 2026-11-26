@@ -31,6 +31,8 @@
 
   let position = $derived(dragging ?? player.position);
   let progress = $derived(player.duration > 0 ? (position / player.duration) * 100 : 0);
+  /** On Android the phone's own volume buttons control loudness. */
+  const showVolume = !("MossampAndroid" in window);
   let volumeIcon = $derived(player.volume === 0 ? VolumeX : player.volume < 0.5 ? Volume1 : Volume2);
 
   let blur: HTMLDivElement;
@@ -231,7 +233,7 @@
         <div class="grabber"></div>
         <header>
           <IconButton icon={ChevronDown} label="Close player" variant="soft" onclick={close} />
-          <span>Now playing</span>
+          <span class="now" class:live={player.playing}>Now playing</span>
           <span class="spacer"></span>
         </header>
 
@@ -286,23 +288,25 @@
           />
         </div>
 
-        <div class="volume">
-          <IconButton
-            icon={volumeIcon}
-            label="Mute"
-            size="sm"
-            onclick={() => api.setVolume(player.volume > 0 ? 0 : 0.8)}
-          />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={player.volume}
-            style="--progress: {player.volume * 100}%"
-            oninput={(e) => api.setVolume(Number(e.currentTarget.value))}
-          />
-        </div>
+        {#if showVolume}
+          <div class="volume">
+            <IconButton
+              icon={volumeIcon}
+              label="Mute"
+              size="sm"
+              onclick={() => api.setVolume(player.volume > 0 ? 0 : 0.8)}
+            />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={player.volume}
+              style="--progress: {player.volume * 100}%"
+              oninput={(e) => api.setVolume(Number(e.currentTarget.value))}
+            />
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -406,6 +410,41 @@
 
   .spacer {
     width: 2.9rem;
+  }
+
+  /* While playing, a soft highlight sweeps through the text from left to
+     right. The text keeps its usual muted colour; only the light band moves. */
+  .now.live {
+    background: linear-gradient(
+        90deg,
+        var(--fg-muted) 0%,
+        var(--fg-muted) 40%,
+        color-mix(in srgb, var(--fg-muted) 40%, var(--fg)) 50%,
+        var(--fg-muted) 60%,
+        var(--fg-muted) 100%
+      )
+      0 0 / 250% 100% no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: now-sweep 3.5s ease-in-out infinite;
+  }
+
+  @keyframes now-sweep {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: 0% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .now.live {
+      animation: none;
+      background: none;
+      color: inherit;
+    }
   }
 
   .art {

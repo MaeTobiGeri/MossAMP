@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Power, RotateCcw } from "@lucide/svelte";
   import { api } from "./api";
-  import { app } from "./store.svelte";
+  import { app, updateConfig } from "./store.svelte";
   import IconButton from "./IconButton.svelte";
+  import Toggle from "./Toggle.svelte";
 
   const presets: Record<string, number[]> = {
     Flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -21,6 +22,13 @@
   let activePreset = $derived(
     Object.entries(presets).find(([, values]) => values.every((v, i) => v === gains[i]))?.[0],
   );
+
+  let leveling = $derived(app.config?.playback.normalize ?? false);
+  let pending = $derived(app.loudness.total - app.loudness.analyzed);
+
+  function setLeveling(on: boolean) {
+    updateConfig((config) => (config.playback.normalize = on));
+  }
 
   function label(frequency: number): string {
     return frequency >= 1000 ? `${frequency / 1000}k` : String(frequency);
@@ -74,6 +82,22 @@
     {/each}
   </div>
   <p class="hint">Double-tap a slider to reset it.</p>
+
+  <section class="leveling">
+    <Toggle checked={leveling} label="Volume leveling" onchange={setLeveling} />
+    <p>
+      Plays every song at about the same loudness, so you can set your volume once. Quiet songs are only
+      raised as far as they can go without distorting.
+    </p>
+    {#if leveling && pending > 0}
+      <div class="progress" style="--done: {(app.loudness.analyzed / Math.max(app.loudness.total, 1)) * 100}%">
+        <span>Measuring songs: {app.loudness.analyzed} of {app.loudness.total}</span>
+        <div class="bar"><div></div></div>
+      </div>
+    {:else if leveling && app.loudness.total > 0}
+      <p class="done">All {app.loudness.total} songs measured.</p>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -185,5 +209,50 @@
     margin: 0.8rem 0.4rem;
     color: var(--fg-muted);
     font-size: 0.8rem;
+  }
+
+  .leveling {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    margin-top: 1.2rem;
+    padding: 1.1rem 1.2rem;
+    border-radius: var(--radius);
+    background: var(--bg-soft);
+  }
+
+  .leveling p {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+
+  .leveling .done {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: var(--warm);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .bar {
+    height: 6px;
+    overflow: hidden;
+    border-radius: var(--pill);
+    background: var(--bg-raised);
+  }
+
+  .bar div {
+    width: var(--done);
+    height: 100%;
+    border-radius: inherit;
+    background: var(--warm);
+    transition: width 0.4s var(--ease-smooth);
   }
 </style>

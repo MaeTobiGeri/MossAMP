@@ -21,6 +21,12 @@ pub struct Track {
     pub year: u32,
     pub duration: f64,
     pub format: String,
+    /// Integrated loudness in LUFS, once measured (see `loudness.rs`).
+    #[serde(default)]
+    pub loudness: Option<f64>,
+    /// Sample peak (linear), once measured.
+    #[serde(default)]
+    pub peak: Option<f64>,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -99,6 +105,8 @@ pub fn open(path: &Path) -> Result<Connection, String> {
         "ALTER TABLE playlist_tracks ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    let _ = conn.execute("ALTER TABLE tracks ADD COLUMN loudness REAL", []);
+    let _ = conn.execute("ALTER TABLE tracks ADD COLUMN peak REAL", []);
     Ok(conn)
 }
 
@@ -221,6 +229,8 @@ fn read_track(path: &Path) -> Option<Track> {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default(),
+        loudness: None,
+        peak: None,
     })
 }
 
@@ -242,7 +252,10 @@ pub fn store_scan(conn: &mut Connection, tracks: &[Track]) -> Result<(), String>
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(path) DO UPDATE SET
                 title = ?2, artist = ?3, album = ?4, genre = ?5,
-                year = ?6, duration = ?7, format = ?8",
+                year = ?6, duration = ?7, format = ?8,
+                -- A different duration means the file was replaced: measure again.
+                loudness = CASE WHEN abs(duration - ?7) < 0.5 THEN loudness END,
+                peak = CASE WHEN abs(duration - ?7) < 0.5 THEN peak END",
             params![
                 track.path,
                 track.title,
@@ -289,10 +302,13 @@ fn row_to_track(row: &rusqlite::Row) -> rusqlite::Result<Track> {
         year: row.get(6)?,
         duration: row.get(7)?,
         format: row.get(8)?,
+        loudness: row.get(9)?,
+        peak: row.get(10)?,
     })
 }
 
-const TRACK_COLUMNS: &str = "t.id, t.path, t.title, t.artist, t.album, t.genre, t.year, t.duration, t.format";
+const TRACK_COLUMNS: &str =
+    "t.id, t.path, t.title, t.artist, t.album, t.genre, t.year, t.duration, t.format, t.loudness, t.peak";
 
 pub fn all_tracks(conn: &Connection) -> Result<Vec<Track>, String> {
     let sql = format!("SELECT {TRACK_COLUMNS} FROM tracks t ORDER BY t.artist, t.album, t.title");
@@ -467,6 +483,57 @@ pub fn remove_from_playlist(conn: &Connection, playlist_id: i64, track_id: i64) 
     Ok(())
 }
 
+/// A song whose loudness has not been measured yet.
+pub fn next_unmeasured(conn: &Connection) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT path FROM tracks WHERE loudness IS NULL ORDER BY id LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other.to_string()),
+    })
+}
+
+pub fn loudness_of(conn: &Connection, path: &str) -> Result<Option<(f64, f64)>, String> {
+    conn.query_row(
+        "SELECT loudness, COALESCE(peak, 0) FROM tracks WHERE path = ?1 AND loudness IS NOT NULL",
+        [path],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other.to_string()),
+    })
+}
+
+/// Fails when the song is no longer in the library.
+pub fn store_loudness(conn: &Connection, path: &str, (loudness, peak): (f64, f64)) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE tracks SET loudness = ?2, peak = ?3 WHERE path = ?1",
+            params![path, loudness, peak],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Song not in library".into());
+    }
+    Ok(())
+}
+
+pub fn loudness_progress(conn: &Connection) -> Result<crate::loudness::Progress, String> {
+    conn.query_row("SELECT COUNT(loudness), COUNT(*) FROM tracks", [], |row| {
+        Ok(crate::loudness::Progress {
+            analyzed: row.get(0)?,
+            total: row.get(1)?,
+        })
+    })
+    .map_err(|e| e.to_string())
+}
+
 pub fn cover_data_url(path: &Path) -> Option<String> {
     let tagged = lofty::read_from_path(path).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
@@ -491,6 +558,8 @@ mod tests {
             year: 0,
             duration: 0.0,
             format: "mp3".into(),
+            loudness: None,
+            peak: None,
         }
     }
 
@@ -531,5 +600,32 @@ mod tests {
         let roots = [PathBuf::from("/m")];
         let found: Vec<(String, usize)> = folders(&conn, &roots).unwrap().into_iter().map(|f| (f.label, f.count)).collect();
         assert_eq!(found, [("m".into(), 5), ("m/Pop".into(), 1), ("m/Rock".into(), 3), ("m/Rock/sub".into(), 1), ("m/rock2".into(), 1)]);
+    }
+
+    #[test]
+    fn loudness_is_stored_and_reset_when_a_file_changes() {
+        let mut conn = open(Path::new(":memory:")).unwrap();
+        let mut song = track("/m/a.mp3");
+        song.duration = 200.0;
+        store_scan(&mut conn, &[song.clone(), track("/m/b.mp3")]).unwrap();
+
+        assert_eq!(next_unmeasured(&conn).unwrap().as_deref(), Some("/m/a.mp3"));
+        store_loudness(&conn, "/m/a.mp3", (-9.0, 0.95)).unwrap();
+        assert!(store_loudness(&conn, "/m/gone.mp3", (-9.0, 1.0)).is_err());
+
+        let progress = loudness_progress(&conn).unwrap();
+        assert_eq!((progress.analyzed, progress.total), (1, 2));
+        assert_eq!(next_unmeasured(&conn).unwrap().as_deref(), Some("/m/b.mp3"));
+        let stored = all_tracks(&conn).unwrap().into_iter().find(|t| t.path == "/m/a.mp3").unwrap();
+        assert_eq!((stored.loudness, stored.peak), (Some(-9.0), Some(0.95)));
+
+        // A rescan of the same file keeps the measurement...
+        store_scan(&mut conn, &[song.clone(), track("/m/b.mp3")]).unwrap();
+        assert_eq!(loudness_of(&conn, "/m/a.mp3").unwrap(), Some((-9.0, 0.95)));
+
+        // ...but a replaced file (different length) is measured again.
+        song.duration = 260.0;
+        store_scan(&mut conn, &[song, track("/m/b.mp3")]).unwrap();
+        assert_eq!(loudness_of(&conn, "/m/a.mp3").unwrap(), None);
     }
 }

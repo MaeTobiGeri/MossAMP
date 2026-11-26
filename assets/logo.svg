@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MossAMP">
+  <title>MossAMP</title>
+  <!-- Rounded tile in the app's background colour -->
+  <rect width="512" height="512" rx="120" fill="#262825"/>
+  <g transform="translate(-31 -22)">
+    <!-- Music note: stem and head in moss green -->
+    <rect x="268" y="132" width="34" height="232" rx="17" fill="#b4d47c"/>
+    <ellipse cx="226" cy="364" rx="76" ry="58" transform="rotate(-22 226 364)" fill="#b4d47c"/>
+    <!-- The note's flag is a leaf growing from the top of the stem -->
+    <path d="M290 146 C340 118 410 132 424 196 C362 214 310 196 290 146 Z" fill="#e3b766"/>
+    <path d="M300 152 C340 160 378 172 408 190" stroke="#262825" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

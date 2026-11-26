@@ -13,9 +13,13 @@ use tauri::{AppHandle, Emitter};
 use crate::config::{PlaybackConfig, Repeat};
 use crate::eq::{EqShared, Equalizer};
 use crate::library::Track;
+use crate::loudness::{self, Request};
 use crate::media_keys::MediaKeys;
 
 const TICK: Duration = Duration::from_millis(250);
+/// On phones the system volume buttons control loudness, so the app always
+/// plays at full level there and has no volume slider of its own.
+const FIXED_VOLUME: bool = cfg!(any(target_os = "android", target_os = "ios"));
 const RESTART_THRESHOLD: f64 = 3.0;
 /// Ticks of "playing but the position does not move" before the output is
 /// considered dead and reopened (8 * 250ms = 2s).
@@ -34,6 +38,10 @@ pub enum Command {
     Volume(f32),
     Shuffle(bool),
     Repeat(Repeat),
+    /// Turns volume leveling on or off.
+    Normalize(bool),
+    /// A song's loudness was measured.
+    Loudness { path: String, loudness: f64, peak: f64 },
 }
 
 #[derive(Serialize, Clone)]
@@ -75,6 +83,8 @@ struct Player {
     last_pos: Duration,
     stall_ticks: u32,
     eq: Arc<EqShared>,
+    normalize: bool,
+    analyzer: Sender<Request>,
     sink: Option<Sink>,
     queue: Vec<Track>,
     index: Option<usize>,
@@ -85,7 +95,12 @@ struct Player {
     random_state: u64,
 }
 
-pub fn spawn(app: AppHandle, eq: Arc<EqShared>, settings: PlaybackConfig) -> Sender<Command> {
+pub fn spawn(
+    app: AppHandle,
+    eq: Arc<EqShared>,
+    settings: PlaybackConfig,
+    analyzer: Sender<Request>,
+) -> Sender<Command> {
     let (tx, rx) = mpsc::channel();
     let media_keys_tx = tx.clone();
 
@@ -105,11 +120,13 @@ pub fn spawn(app: AppHandle, eq: Arc<EqShared>, settings: PlaybackConfig) -> Sen
             last_pos: Duration::ZERO,
             stall_ticks: 0,
             eq,
+            normalize: settings.normalize,
+            analyzer,
             sink: None,
             queue: Vec::new(),
             index: None,
             history: Vec::new(),
-            volume: settings.volume,
+            volume: if FIXED_VOLUME { 1.0 } else { settings.volume },
             shuffle: settings.shuffle,
             repeat: settings.repeat,
             random_state: seed | 1,
@@ -226,6 +243,7 @@ impl Player {
                     self.load_track(index, Duration::from_secs_f64(seconds.max(0.0)), paused);
                 }
             }
+            Command::Volume(_) if FIXED_VOLUME => {}
             Command::Volume(volume) => {
                 self.volume = volume.clamp(0.0, 1.0);
                 if let Some(sink) = &self.sink {
@@ -234,6 +252,21 @@ impl Player {
             }
             Command::Shuffle(enabled) => self.shuffle = enabled,
             Command::Repeat(mode) => self.repeat = mode,
+            Command::Normalize(enabled) => {
+                self.normalize = enabled;
+                self.apply_track_gain();
+            }
+            Command::Loudness { path, loudness, peak } => {
+                // Every copy in the queue learns the result, so the song
+                // starts at the right level the next time too.
+                for track in self.queue.iter_mut().filter(|t| t.path == path) {
+                    track.loudness = Some(loudness);
+                    track.peak = Some(peak);
+                }
+                if self.current_track().is_some_and(|t| t.path == path) {
+                    self.apply_track_gain();
+                }
+            }
         }
     }
 
@@ -271,6 +304,10 @@ impl Player {
             offset = start;
         }
 
+        // Set before the sink exists so the song starts at its own level.
+        self.index = Some(index);
+        self.apply_track_gain();
+
         let sink = Sink::connect_new(stream.mixer());
         sink.set_volume(self.volume);
         if paused {
@@ -284,6 +321,25 @@ impl Player {
         self.last_pos = offset;
         self.stall_ticks = 0;
         true
+    }
+
+    fn current_track(&self) -> Option<&Track> {
+        self.index.and_then(|i| self.queue.get(i))
+    }
+
+    /// Volume-leveling gain for the current song; asks the analyser to
+    /// measure it first if that has not happened yet.
+    fn apply_track_gain(&self) {
+        let gain = match self.current_track() {
+            Some(track) if self.normalize => {
+                if track.loudness.is_none() {
+                    let _ = self.analyzer.send(Request::Priority(track.path.clone()));
+                }
+                loudness::gain(track.loudness, track.peak)
+            }
+            _ => 1.0,
+        };
+        self.eq.set_track_gain(gain);
     }
 
     fn position(&self) -> Duration {
