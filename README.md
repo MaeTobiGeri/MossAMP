@@ -1,4 +1,4 @@
-# Musicapp
+# MossAMP
 
 A cozy, Poweramp-inspired music player built with Rust, Tauri 2 and Svelte. Pastel gruvbox greens by default.
 
@@ -11,7 +11,7 @@ Needs `cargo install tauri-cli --locked` and the Tauri Linux dependencies (webki
 
 ## Config (desktop)
 
-`~/.config/musicapp/config.toml` is created on first start and watched live. Edit it in any editor and the
+`~/.config/mossamp/config.toml` is created on first start and watched live. Edit it in any editor and the
 app updates instantly: theme colors, radius, font, library folders, playback, EQ and cloud login. A broken
 file shows an error in Settings and the last good config stays active. On mobile the same options live in
 the Settings page.

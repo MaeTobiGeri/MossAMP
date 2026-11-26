@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use config::{Config, Repeat, EQ_BANDS};
 use eq::EqShared;
-use library::{FilterOptions, Playlist, SearchFilter, Track};
+use library::{FilterOptions, Folder, Playlist, SearchFilter, Track};
 use player::Command;
 
 struct AppState {
@@ -121,8 +121,14 @@ fn get_playlists(state: State<AppState>) -> Result<Vec<Playlist>, String> {
 }
 
 #[tauri::command]
-fn create_playlist(state: State<AppState>, name: String) -> Result<(), String> {
-    library::create_playlist(&state.db.lock().unwrap(), &name)
+fn create_playlist(state: State<AppState>, name: String, folder: Option<String>) -> Result<i64, String> {
+    library::create_playlist(&state.db.lock().unwrap(), &name, folder.as_deref())
+}
+
+#[tauri::command]
+fn get_folders(state: State<AppState>) -> Result<Vec<Folder>, String> {
+    let roots = state.scan_folders();
+    library::folders(&state.db.lock().unwrap(), &roots)
 }
 
 #[tauri::command]
@@ -136,8 +142,8 @@ fn get_playlist_tracks(state: State<AppState>, id: i64) -> Result<Vec<Track>, St
 }
 
 #[tauri::command]
-fn add_to_playlist(state: State<AppState>, playlist_id: i64, track_id: i64) -> Result<(), String> {
-    library::add_to_playlist(&state.db.lock().unwrap(), playlist_id, track_id)
+fn add_to_playlist(state: State<AppState>, playlist_id: i64, track_ids: Vec<i64>) -> Result<(), String> {
+    library::add_to_playlist(&mut state.db.lock().unwrap(), playlist_id, &track_ids)
 }
 
 #[tauri::command]
@@ -279,7 +285,7 @@ fn watch_config(_app: &AppHandle) -> Option<Box<dyn std::any::Any + Send>> {
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app.path();
-    let config_path = paths.config_dir()?.join("musicapp").join("config.toml");
+    let config_path = paths.config_dir()?.join("mossamp").join("config.toml");
     let data_dir = paths.app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
 
@@ -336,6 +342,7 @@ pub fn run() {
             get_cover,
             get_playlists,
             create_playlist,
+            get_folders,
             delete_playlist,
             get_playlist_tracks,
             add_to_playlist,
@@ -356,5 +363,5 @@ pub fn run() {
             cloud_sync,
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run musicapp");
+        .expect("failed to run mossamp");
 }

@@ -19,8 +19,8 @@ mod desktop {
     impl MediaKeys {
         pub fn new(tx: Sender<Command>) -> Self {
             let config = PlatformConfig {
-                dbus_name: "musicapp",
-                display_name: "Musicapp",
+                dbus_name: "mossamp",
+                display_name: "MossAMP",
                 hwnd: None,
             };
 

@@ -16,6 +16,15 @@ export interface Playlist {
   id: number;
   name: string;
   count: number;
+  /** Folder the playlist is linked to; new songs there are added on every scan. */
+  folder: string | null;
+}
+
+export interface Folder {
+  path: string;
+  label: string;
+  name: string;
+  count: number;
 }
 
 export type Repeat = "off" | "all" | "one";
@@ -97,11 +106,13 @@ export const api = {
   getCover: (path: string) => invoke<string | null>("get_cover", { path }),
 
   getPlaylists: () => invoke<Playlist[]>("get_playlists"),
-  createPlaylist: (name: string) => invoke<void>("create_playlist", { name }),
+  createPlaylist: (name: string, folder: string | null) =>
+    invoke<number>("create_playlist", { name, folder }),
+  getFolders: () => invoke<Folder[]>("get_folders"),
   deletePlaylist: (id: number) => invoke<void>("delete_playlist", { id }),
   getPlaylistTracks: (id: number) => invoke<Track[]>("get_playlist_tracks", { id }),
-  addToPlaylist: (playlistId: number, trackId: number) =>
-    invoke<void>("add_to_playlist", { playlistId, trackId }),
+  addToPlaylist: (playlistId: number, trackIds: number[]) =>
+    invoke<void>("add_to_playlist", { playlistId, trackIds }),
   removeFromPlaylist: (playlistId: number, trackId: number) =>
     invoke<void>("remove_from_playlist", { playlistId, trackId }),
 

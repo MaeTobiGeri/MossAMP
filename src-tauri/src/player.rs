@@ -1,10 +1,12 @@
 use std::fs::File;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+use rodio::cpal::StreamError;
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -15,6 +17,9 @@ use crate::media_keys::MediaKeys;
 
 const TICK: Duration = Duration::from_millis(250);
 const RESTART_THRESHOLD: f64 = 3.0;
+/// Ticks of "playing but the position does not move" before the output is
+/// considered dead and reopened (8 * 250ms = 2s).
+const STALL_TICKS: u32 = 8;
 
 pub enum Command {
     PlayQueue(Vec<Track>, usize),
@@ -60,6 +65,15 @@ impl PlayerState {
 struct Player {
     app: AppHandle,
     stream: Option<OutputStream>,
+    /// Set from the audio backend's error callback when the output device went
+    /// away (e.g. Android disconnects the AAudio stream when Bluetooth connects
+    /// and the audio route changes).
+    stream_lost: Arc<AtomicBool>,
+    /// Position where the current sink's source started (sources are seeked
+    /// before being appended, so `sink.get_pos()` is relative to this).
+    offset: Duration,
+    last_pos: Duration,
+    stall_ticks: u32,
     eq: Arc<EqShared>,
     sink: Option<Sink>,
     queue: Vec<Track>,
@@ -76,7 +90,8 @@ pub fn spawn(app: AppHandle, eq: Arc<EqShared>, settings: PlaybackConfig) -> Sen
     let media_keys_tx = tx.clone();
 
     thread::spawn(move || {
-        let stream = OutputStreamBuilder::open_default_stream().ok();
+        let stream_lost = Arc::new(AtomicBool::new(false));
+        let stream = open_stream(&stream_lost);
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -85,6 +100,10 @@ pub fn spawn(app: AppHandle, eq: Arc<EqShared>, settings: PlaybackConfig) -> Sen
         let mut player = Player {
             app,
             stream,
+            stream_lost,
+            offset: Duration::ZERO,
+            last_pos: Duration::ZERO,
+            stall_ticks: 0,
             eq,
             sink: None,
             queue: Vec::new(),
@@ -101,15 +120,51 @@ pub fn spawn(app: AppHandle, eq: Arc<EqShared>, settings: PlaybackConfig) -> Sen
     tx
 }
 
+/// Opens the current default output device. The error callback flags the
+/// stream as lost when the device disappears so the player thread can reopen
+/// it on whatever device is the default now.
+fn open_stream(lost: &Arc<AtomicBool>) -> Option<OutputStream> {
+    lost.store(false, Ordering::SeqCst);
+    let flag = lost.clone();
+    let on_error = move |err: StreamError| {
+        eprintln!("audio stream error: {err}");
+        if matches!(err, StreamError::DeviceNotAvailable) {
+            flag.store(true, Ordering::SeqCst);
+        }
+    };
+
+    let builder = match OutputStreamBuilder::from_default_device() {
+        Ok(builder) => builder.with_error_callback(on_error),
+        Err(err) => {
+            eprintln!("no audio output device: {err}");
+            return None;
+        }
+    };
+    match builder.open_stream_or_fallback() {
+        Ok(mut stream) => {
+            stream.log_on_drop(false);
+            Some(stream)
+        }
+        Err(err) => {
+            eprintln!("cannot open audio output: {err}");
+            None
+        }
+    }
+}
+
 impl Player {
     fn run(&mut self, rx: Receiver<Command>, mut media_keys: MediaKeys) {
         loop {
             let received = match rx.recv_timeout(TICK) {
                 Ok(command) => {
+                    self.check_output();
                     self.handle(command);
                     true
                 }
-                Err(RecvTimeoutError::Timeout) => false,
+                Err(RecvTimeoutError::Timeout) => {
+                    self.check_output();
+                    false
+                }
                 Err(RecvTimeoutError::Disconnected) => return,
             };
 
@@ -140,6 +195,8 @@ impl Player {
             Command::Resume => {
                 if let Some(sink) = &self.sink {
                     sink.play();
+                } else if let Some(index) = self.index {
+                    self.start_track(index);
                 }
             }
             Command::Pause => {
@@ -161,8 +218,12 @@ impl Player {
             Command::Next => self.skip_forward(),
             Command::Previous => self.skip_back(),
             Command::Seek(seconds) => {
-                if let Some(sink) = &self.sink {
-                    let _ = sink.try_seek(Duration::from_secs_f64(seconds.max(0.0)));
+                // Rebuild the sink from a pre-seeked decoder instead of using
+                // `Sink::try_seek`, which blocks until the audio thread picks the
+                // request up and therefore hangs forever on a dead output.
+                if let (Some(sink), Some(index)) = (&self.sink, self.index) {
+                    let paused = sink.is_paused();
+                    self.load_track(index, Duration::from_secs_f64(seconds.max(0.0)), paused);
                 }
             }
             Command::Volume(volume) => {
@@ -177,30 +238,102 @@ impl Player {
     }
 
     fn start_track(&mut self, index: usize) -> bool {
+        self.load_track(index, Duration::ZERO, false)
+    }
+
+    fn load_track(&mut self, index: usize, start: Duration, paused: bool) -> bool {
         self.stop_sink();
         let Some(track) = self.queue.get(index) else {
             return false;
         };
+        if self.stream.is_none() {
+            // Startup or a previous reopen may have failed (e.g. while the
+            // phone was switching to Bluetooth); try again now.
+            self.stream = open_stream(&self.stream_lost);
+        }
         let Some(stream) = &self.stream else {
+            let _ = self.app.emit("player-error", "No audio output device available");
+            self.index = Some(index);
             return false;
         };
 
         let decoded = File::open(&track.path)
             .ok()
             .and_then(|file| Decoder::try_from(file).ok());
-        let Some(decoder) = decoded else {
+        let Some(mut decoder) = decoded else {
             let _ = self.app.emit("player-error", format!("Cannot play {}", track.title));
             self.index = Some(index);
             return false;
         };
 
+        let mut offset = Duration::ZERO;
+        if start > Duration::ZERO && decoder.try_seek(start).is_ok() {
+            offset = start;
+        }
+
         let sink = Sink::connect_new(stream.mixer());
         sink.set_volume(self.volume);
+        if paused {
+            sink.pause();
+        }
         sink.append(Equalizer::new(decoder, self.eq.clone()));
 
         self.sink = Some(sink);
         self.index = Some(index);
+        self.offset = offset;
+        self.last_pos = offset;
+        self.stall_ticks = 0;
         true
+    }
+
+    fn position(&self) -> Duration {
+        self.sink
+            .as_ref()
+            .map(|sink| self.offset + sink.get_pos())
+            .unwrap_or(Duration::ZERO)
+    }
+
+    /// Detects a dead audio output and reopens it on the current default
+    /// device, resuming the current track where it was.
+    fn check_output(&mut self) {
+        let lost = self.stream_lost.load(Ordering::SeqCst);
+
+        let stalled = if self.is_playing() {
+            let pos = self.position();
+            if pos == self.last_pos {
+                self.stall_ticks += 1;
+            } else {
+                self.stall_ticks = 0;
+                self.last_pos = pos;
+            }
+            self.stall_ticks >= STALL_TICKS
+        } else {
+            self.stall_ticks = 0;
+            false
+        };
+
+        if lost || stalled {
+            self.reopen_output();
+        }
+    }
+
+    fn reopen_output(&mut self) {
+        let resume = self
+            .sink
+            .as_ref()
+            .map(|sink| sink.is_paused())
+            .zip(self.index);
+        let position = self.position();
+
+        self.stop_sink();
+        // Drop the old stream before opening a new one so the backend releases it.
+        self.stream = None;
+        self.stream = open_stream(&self.stream_lost);
+        self.stall_ticks = 0;
+
+        if let Some((paused, index)) = resume {
+            self.load_track(index, position, paused);
+        }
     }
 
     fn stop_sink(&mut self) {
@@ -265,15 +398,12 @@ impl Player {
     }
 
     fn skip_back(&mut self) {
-        let position = self
-            .sink
-            .as_ref()
-            .map(|sink| sink.get_pos().as_secs_f64())
-            .unwrap_or(0.0);
+        let position = self.position().as_secs_f64();
 
         if position > RESTART_THRESHOLD {
-            if let Some(sink) = &self.sink {
-                let _ = sink.try_seek(Duration::ZERO);
+            if let (Some(sink), Some(index)) = (&self.sink, self.index) {
+                let paused = sink.is_paused();
+                self.load_track(index, Duration::ZERO, paused);
             }
             return;
         }
@@ -300,11 +430,7 @@ impl Player {
         let track = self.index.and_then(|i| self.queue.get(i)).cloned();
         PlayerState {
             duration: track.as_ref().map(|t| t.duration).unwrap_or(0.0),
-            position: self
-                .sink
-                .as_ref()
-                .map(|sink| sink.get_pos().as_secs_f64())
-                .unwrap_or(0.0),
+            position: self.position().as_secs_f64(),
             playing: self.is_playing(),
             track,
             volume: self.volume,

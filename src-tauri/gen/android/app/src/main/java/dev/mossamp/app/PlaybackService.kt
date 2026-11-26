@@ -1,4 +1,4 @@
-package dev.musicapp.app
+package dev.mossamp.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -26,7 +26,7 @@ class PlaybackService : Service() {
     )
 
     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-    wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "musicapp:playback").apply {
+    wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mossamp:playback").apply {
       setReferenceCounted(false)
       acquire()
     }
@@ -34,7 +34,7 @@ class PlaybackService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val notification = buildNotification(
-      intent?.getStringExtra(EXTRA_TITLE) ?: "Musicapp",
+      intent?.getStringExtra(EXTRA_TITLE) ?: "MossAMP",
       intent?.getStringExtra(EXTRA_ARTIST) ?: "",
       intent?.getBooleanExtra(EXTRA_PLAYING, false) ?: false,
     )

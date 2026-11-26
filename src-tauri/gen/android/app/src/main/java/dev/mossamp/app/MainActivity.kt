@@ -1,4 +1,4 @@
-package dev.musicapp.app
+package dev.mossamp.app
 
 import android.Manifest
 import android.os.Build
@@ -26,7 +26,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onWebViewCreate(webView: WebView) {
-    webView.addJavascriptInterface(PlaybackBridge(this), "MusicappAndroid")
+    webView.addJavascriptInterface(PlaybackBridge(this), "MossampAndroid")
   }
 
   private fun requestRuntimePermissions() {

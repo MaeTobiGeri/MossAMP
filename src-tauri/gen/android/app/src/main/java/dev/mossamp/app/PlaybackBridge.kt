@@ -1,4 +1,4 @@
-package dev.musicapp.app
+package dev.mossamp.app
 
 import android.content.Context
 import android.content.Intent

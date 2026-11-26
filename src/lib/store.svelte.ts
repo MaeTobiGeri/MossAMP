@@ -53,7 +53,7 @@ interface AndroidBridge {
 let lastNotified = "";
 
 function syncAndroidNotification(player: PlayerState) {
-  const bridge = (window as unknown as { MusicappAndroid?: AndroidBridge }).MusicappAndroid;
+  const bridge = (window as unknown as { MossampAndroid?: AndroidBridge }).MossampAndroid;
   if (!bridge || !player.track) return;
 
   const key = `${player.track.id}:${player.playing}`;

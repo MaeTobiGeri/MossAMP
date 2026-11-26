@@ -1,11 +1,11 @@
 [package]
-name = "musicapp"
+name = "mossamp"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
 
 [lib]
-name = "musicapp_lib"
+name = "mossamp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

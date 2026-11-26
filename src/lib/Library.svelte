@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Play, Shuffle } from "@lucide/svelte";
+  import { ListPlus, Play, Shuffle } from "@lucide/svelte";
   import { api, type Track } from "./api";
   import { app, playAndOpen } from "./store.svelte";
   import IconButton from "./IconButton.svelte";
   import PlaylistPanel from "./PlaylistPanel.svelte";
+  import SongPicker from "./SongPicker.svelte";
   import TrackList from "./TrackList.svelte";
 
   /** Size of the corner area a swipe has to start in (top-left to open, bottom-right to close). */
@@ -14,6 +15,9 @@
   let tracks: Track[] = $state([]);
   let panelProgress = $state(0);
   let dragging = $state(false);
+  let picking = $state(false);
+
+  let playlist = $derived(app.playlists.find((p) => p.id === app.selectedPlaylist) ?? null);
 
   let title = $derived(
     app.selectedPlaylist === null
@@ -162,7 +166,10 @@
         <p>{tracks.length} songs</p>
       </button>
       <div class="actions">
-        <IconButton icon={Shuffle} label="Shuffle" variant="soft" onclick={shuffleAll} disabled={tracks.length === 0} />
+        {#if playlist}
+          <IconButton icon={ListPlus} label="Add songs" variant="soft" size="sm" onclick={() => (picking = true)} />
+        {/if}
+        <IconButton icon={Shuffle} label="Shuffle" variant="soft" size="sm" onclick={shuffleAll} disabled={tracks.length === 0} />
         <IconButton
           icon={Play}
           label="Play"
@@ -174,8 +181,19 @@
       </div>
     </header>
 
-    <TrackList {tracks} playlistId={app.selectedPlaylist} onchange={load} />
+    {#if playlist && tracks.length === 0}
+      <div class="empty">
+        <p>This playlist is empty.</p>
+        <button onclick={() => (picking = true)}><ListPlus size={18} strokeWidth={2.75} />Add songs</button>
+      </div>
+    {:else}
+      <TrackList {tracks} playlistId={app.selectedPlaylist} onchange={load} />
+    {/if}
   </div>
+
+  {#if picking && playlist}
+    <SongPicker {playlist} onclose={() => (picking = false)} onadded={load} />
+  {/if}
 
   <PlaylistPanel progress={panelProgress} {dragging} onclose={closePanel} />
 </div>
@@ -244,5 +262,26 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 3rem 1rem;
+    color: var(--fg-muted);
+  }
+
+  .empty button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.25rem;
+    border: none;
+    border-radius: var(--pill);
+    background: var(--bg-raised);
+    color: var(--accent);
+    font-weight: 800;
   }
 </style>

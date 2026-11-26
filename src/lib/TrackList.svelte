@@ -20,7 +20,7 @@
   }
 
   async function addToPlaylist(playlist: number, track: Track) {
-    await api.addToPlaylist(playlist, track.id);
+    await api.addToPlaylist(playlist, [track.id]);
     await refreshPlaylists();
     notify(`Added “${track.title}”`);
   }

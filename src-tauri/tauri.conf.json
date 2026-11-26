@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Musicapp",
+  "productName": "MossAMP",
   "version": "0.1.0",
-  "identifier": "dev.musicapp.app",
+  "identifier": "dev.mossamp.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Musicapp",
+        "title": "MossAMP",
         "width": 1000,
         "height": 700,
         "minWidth": 360,
