@@ -135,6 +135,7 @@ export const api = {
   previous: () => invoke<void>("player_previous"),
   seek: (seconds: number) => invoke<void>("player_seek", { seconds }),
   setVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
+  previewVolume: (volume: number) => invoke<void>("player_preview_volume", { volume }),
   setShuffle: (enabled: boolean) => invoke<void>("player_set_shuffle", { enabled }),
   setRepeat: (mode: Repeat) => invoke<void>("player_set_repeat", { mode }),
 

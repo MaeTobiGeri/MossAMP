@@ -5,54 +5,67 @@
   import FullPlayer from "./lib/FullPlayer.svelte";
   import Library from "./lib/Library.svelte";
   import MiniPlayer from "./lib/MiniPlayer.svelte";
+  import PlayerPanel from "./lib/PlayerPanel.svelte";
   import Search from "./lib/Search.svelte";
   import Settings from "./lib/Settings.svelte";
 
   let current: PageId = $state("library");
-  /** +1 when moving to a page further right in the nav, -1 when moving left. */
-  let direction = $state(1);
   let currentIndex = $derived(pages.findIndex((page) => page.id === current));
+  /**
+   * Pages are built the first time they are opened and then kept alive:
+   * switching only fades and slides them (GPU-only), instead of rebuilding
+   * the song list and reloading every cover each time.
+   */
+  let visited: PageId[] = $state(["library"]);
+  /** Wide windows show the player beside the song list on these pages. */
+  let split = $derived(app.wide && (current === "library" || current === "search"));
 
   function go(id: PageId) {
-    const index = pages.findIndex((page) => page.id === id);
-    if (index === currentIndex) return;
-    direction = index > currentIndex ? 1 : -1;
+    if (id === current) return;
+    if (!visited.includes(id)) visited.push(id);
     current = id;
   }
 
-  /** Slides the page sideways and fades it, in the direction of travel. */
-  function slide(node: HTMLElement, { entering }: { entering: boolean }) {
-    const offset = (entering ? direction : -direction) * 18;
-    return {
-      duration: 380,
-      easing: (t: number) => 1 - Math.pow(1 - t, 4),
-      css: (t: number) => `
-        opacity: ${t};
-        transform: translateX(${(1 - t) * offset}%);
-      `,
-    };
+  /** -1 for pages left of the current one in the nav, +1 for pages right of it. */
+  function side(id: PageId): number {
+    return Math.sign(pages.findIndex((page) => page.id === id) - currentIndex);
   }
 
   initStore();
 </script>
 
 <main>
-  <div class="content">
-    {#if app.config}
-      {#key current}
-        <div class="page" in:slide={{ entering: true }} out:slide={{ entering: false }}>
-          {#if current === "library"}
-            <Library />
-          {:else if current === "search"}
-            <Search />
-          {:else if current === "eq"}
-            <Eq />
-          {:else}
-            <Settings />
-          {/if}
-        </div>
-      {/key}
+  <div class="content" class:split>
+    {#if app.config && app.wide}
+      <!-- Hidden rather than removed on EQ / Settings, so it is not rebuilt. -->
+      <aside class="side" class:hidden={!split}>
+        <PlayerPanel />
+      </aside>
     {/if}
+    <div class="pages">
+      {#if app.config}
+        {#each pages as page (page.id)}
+          {#if visited.includes(page.id)}
+            <div
+              class="page"
+              class:active={page.id === current}
+              style="--side: {side(page.id)}"
+              inert={page.id !== current}
+            >
+              {#if page.id === "library"}
+                <Library />
+              {:else if page.id === "search"}
+                <Search />
+              {:else if page.id === "eq"}
+                <Eq />
+              {:else}
+                <Settings />
+              {/if}
+            </div>
+          {/if}
+        {/each}
+      {/if}
+    </div>
   </div>
 
   {#if app.message}
@@ -61,7 +74,9 @@
 
   <div class="dock">
     <div class="box">
-      <MiniPlayer />
+      {#if !split}
+        <MiniPlayer />
+      {/if}
 
       <nav style="--count: {pages.length}; --index: {currentIndex}">
         <span class="indicator" aria-hidden="true"></span>
@@ -81,7 +96,7 @@
   </div>
 </main>
 
-{#if app.fullPlayerOpen}
+{#if app.fullPlayerOpen && !app.wide}
   <FullPlayer />
 {/if}
 
@@ -98,12 +113,81 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    display: flex;
   }
 
+  .content.split {
+    gap: 0.8rem;
+    padding: 0.8rem 0 0 0.8rem;
+  }
+
+  /* The player box is centred vertically in its column. */
+  .side {
+    flex: 0 0 clamp(20rem, 36%, 32rem);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    animation: side-in 0.35s var(--ease-smooth);
+  }
+
+  .side.hidden {
+    display: none;
+  }
+
+  @keyframes side-in {
+    from {
+      opacity: 0;
+      transform: translateX(-16px);
+    }
+  }
+
+  .pages {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+  }
+
+  /* Inactive pages wait just beside the view (left or right, matching the
+     nav order) and invisible; the active one slides and fades in. Only
+     opacity and transform animate, which the GPU handles without re-layout. */
   .page {
     position: absolute;
     inset: 0;
-    will-change: transform, opacity;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(calc(var(--side) * 4%));
+    transition:
+      opacity 0.22s ease-out,
+      transform 0.32s var(--ease-smooth),
+      visibility 0s linear 0.32s;
+  }
+
+  .page.active {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition:
+      opacity 0.26s ease-out 0.04s,
+      transform 0.32s var(--ease-smooth),
+      visibility 0s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .page,
+    .page.active {
+      transform: none;
+      transition: none;
+    }
+  }
+
+  /* Beside the player, the song list starts right next to it (a small gap)
+     and uses the rest of the window instead of floating centred in it. */
+  .content.split .page :global(:is(.scroll, .search)) {
+    max-width: none;
+    margin: 0;
+    padding-left: 0.4rem;
   }
 
   .dock {

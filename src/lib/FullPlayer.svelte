@@ -1,39 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    ChevronDown,
-    Pause,
-    Play,
-    Repeat,
-    Repeat1,
-    Shuffle,
-    SkipBack,
-    SkipForward,
-    Volume1,
-    Volume2,
-    VolumeX,
-  } from "@lucide/svelte";
-  import { api, formatTime, type Repeat as RepeatMode } from "./api";
+  import { ChevronDown } from "@lucide/svelte";
   import { coverFor } from "./covers";
   import { app } from "./store.svelte";
-  import Cover from "./Cover.svelte";
   import IconButton from "./IconButton.svelte";
+  import NowLabel from "./NowLabel.svelte";
+  import NowPlaying from "./NowPlaying.svelte";
 
-  const nextRepeat: Record<RepeatMode, RepeatMode> = { off: "all", all: "one", one: "off" };
   const popEasing = "cubic-bezier(0.34, 1.45, 0.64, 1)";
   const smoothEasing = "cubic-bezier(0.65, 0, 0.35, 1)";
   const dismissDistance = 0.18;
   const dismissVelocity = 0.5;
 
   let player = $derived(app.player);
-  let dragging: number | null = $state(null);
   let backdrop: string | null = $state(null);
-
-  let position = $derived(dragging ?? player.position);
-  let progress = $derived(player.duration > 0 ? (position / player.duration) * 100 : 0);
-  /** On Android the phone's own volume buttons control loudness. */
-  const showVolume = !("MossampAndroid" in window);
-  let volumeIcon = $derived(player.volume === 0 ? VolumeX : player.volume < 0.5 ? Volume1 : Volume2);
 
   let blur: HTMLDivElement;
   let shell: HTMLDivElement;
@@ -197,11 +177,6 @@
     ).then(() => panel.classList.remove("lifted"));
     settle(blur.animate([{ opacity: blur.style.opacity || "1" }, { opacity: 1 }], { duration: 300, fill: "forwards" }));
   }
-
-  function commitSeek(value: number) {
-    api.seek(value);
-    dragging = null;
-  }
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && close()} />
@@ -233,80 +208,11 @@
         <div class="grabber"></div>
         <header>
           <IconButton icon={ChevronDown} label="Close player" variant="soft" onclick={close} />
-          <span class="now" class:live={player.playing}>Now playing</span>
+          <NowLabel live={player.playing} />
           <span class="spacer"></span>
         </header>
 
-        <div class="art">
-          <Cover path={player.track.path} rounded="large" />
-        </div>
-
-        <div class="details">
-          <h1>{player.track.title}</h1>
-          <p>{player.track.artist} · {player.track.album}</p>
-        </div>
-
-        <div class="seek">
-          <input
-            type="range"
-            min="0"
-            max={player.duration || 1}
-            step="0.5"
-            value={position}
-            style="--progress: {progress}%"
-            oninput={(e) => (dragging = Number(e.currentTarget.value))}
-            onchange={(e) => commitSeek(Number(e.currentTarget.value))}
-          />
-          <div class="times">
-            <span>{formatTime(position)}</span>
-            <span>{formatTime(player.duration)}</span>
-          </div>
-        </div>
-
-        <div class="controls">
-          <IconButton
-            icon={Shuffle}
-            label="Shuffle"
-            active={player.shuffle}
-            onclick={() => api.setShuffle(!player.shuffle)}
-          />
-          <IconButton icon={SkipBack} label="Previous" variant="soft" size="lg" solid onclick={() => api.previous()} />
-          <IconButton
-            icon={player.playing ? Pause : Play}
-            label={player.playing ? "Pause" : "Play"}
-            variant="filled"
-            size="xl"
-            solid
-            onclick={() => api.toggle()}
-          />
-          <IconButton icon={SkipForward} label="Next" variant="soft" size="lg" solid onclick={() => api.next()} />
-          <IconButton
-            icon={player.repeat === "one" ? Repeat1 : Repeat}
-            label="Repeat: {player.repeat}"
-            active={player.repeat !== "off"}
-            onclick={() => api.setRepeat(nextRepeat[player.repeat])}
-          />
-        </div>
-
-        {#if showVolume}
-          <div class="volume">
-            <IconButton
-              icon={volumeIcon}
-              label="Mute"
-              size="sm"
-              onclick={() => api.setVolume(player.volume > 0 ? 0 : 0.8)}
-            />
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={player.volume}
-              style="--progress: {player.volume * 100}%"
-              oninput={(e) => api.setVolume(Number(e.currentTarget.value))}
-            />
-          </div>
-        {/if}
+        <NowPlaying />
       </div>
     {/if}
   </div>
@@ -401,115 +307,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    color: var(--fg-muted);
-    font-size: 0.8rem;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
 
   .spacer {
     width: 2.9rem;
-  }
-
-  /* While playing, a soft highlight sweeps through the text from left to
-     right. The text keeps its usual muted colour; only the light band moves. */
-  .now.live {
-    background: linear-gradient(
-        90deg,
-        var(--fg-muted) 0%,
-        var(--fg-muted) 40%,
-        color-mix(in srgb, var(--fg-muted) 40%, var(--fg)) 50%,
-        var(--fg-muted) 60%,
-        var(--fg-muted) 100%
-      )
-      0 0 / 250% 100% no-repeat;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    animation: now-sweep 3.5s ease-in-out infinite;
-  }
-
-  @keyframes now-sweep {
-    from {
-      background-position: 100% 0;
-    }
-    to {
-      background-position: 0% 0;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .now.live {
-      animation: none;
-      background: none;
-      color: inherit;
-    }
-  }
-
-  .art {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    container-type: size;
-  }
-
-  .art :global(.cover) {
-    width: min(100cqw, 100cqh) !important;
-  }
-
-  .details {
-    text-align: center;
-  }
-
-  h1 {
-    font-size: 1.6rem;
-    font-weight: 900;
-    line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
-  .details p {
-    margin-top: 0.3rem;
-    color: var(--fg-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .seek input {
-    width: 100%;
-  }
-
-  .times {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 0.4rem;
-    color: var(--fg-muted);
-    font-size: 0.8rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .volume {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  .volume input {
-    flex: 1;
   }
 </style>

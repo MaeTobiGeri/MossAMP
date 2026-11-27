@@ -255,4 +255,34 @@
     background: var(--warm);
     transition: width 0.4s var(--ease-smooth);
   }
+
+  /* Desktop: the equalizer uses the whole window and the sliders grow tall. */
+  @media (min-width: 900px) {
+    .eq {
+      display: flex;
+      flex-direction: column;
+      max-width: none;
+      padding: 1.4rem 2rem 1rem;
+    }
+
+    .bands {
+      flex: 1;
+      min-height: 16rem;
+      padding: 2rem 1.5rem;
+    }
+
+    .band input {
+      flex: 1;
+      height: auto;
+      min-height: 0;
+    }
+
+    .value {
+      font-size: 0.85rem;
+    }
+
+    .freq {
+      font-size: 0.9rem;
+    }
+  }
 </style>

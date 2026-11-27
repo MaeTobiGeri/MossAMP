@@ -28,6 +28,8 @@ export const app = $state({
   libraryVersion: 0,
   message: "",
   fullPlayerOpen: false,
+  /** Desktop-sized window: the player sits next to the song list instead of opening full screen. */
+  wide: false,
   /** Playlist shown on the library page; null means all songs. */
   selectedPlaylist: null as number | null,
   /** How many songs volume leveling has measured so far. */
@@ -155,7 +157,15 @@ export async function updateConfig(change: (config: Config) => void) {
   await api.saveConfig(next);
 }
 
+const wideQuery = window.matchMedia("(min-width: 900px)");
+app.wide = wideQuery.matches;
+wideQuery.addEventListener("change", (event) => {
+  app.wide = event.matches;
+  if (event.matches) app.fullPlayerOpen = false;
+});
+
 export function playAndOpen(tracks: Track[], start: number) {
   api.playQueue(tracks, start);
-  app.fullPlayerOpen = true;
+  // On wide windows the player is already visible beside the list.
+  if (!app.wide) app.fullPlayerOpen = true;
 }

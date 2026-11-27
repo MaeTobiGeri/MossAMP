@@ -209,6 +209,13 @@ fn player_seek(state: State<AppState>, seconds: f64) {
     let _ = state.player.send(Command::Seek(seconds));
 }
 
+/// Changes the volume immediately without saving it, for dragging the volume
+/// slider; `player_set_volume` saves the final value when the drag ends.
+#[tauri::command]
+fn player_preview_volume(state: State<AppState>, volume: f32) {
+    let _ = state.player.send(Command::Volume(volume.clamp(0.0, 1.0)));
+}
+
 #[tauri::command]
 fn player_set_volume(app: AppHandle, state: State<AppState>, volume: f32) -> Result<(), String> {
     update_config(&app, &state, |config| config.playback.volume = volume.clamp(0.0, 1.0)).map(|_| ())
@@ -386,6 +393,7 @@ pub fn run() {
             player_next,
             player_previous,
             player_seek,
+            player_preview_volume,
             player_set_volume,
             player_set_shuffle,
             player_set_repeat,
